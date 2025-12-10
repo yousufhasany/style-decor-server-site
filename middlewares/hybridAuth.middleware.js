@@ -33,6 +33,8 @@ const hybridAuth = async (req, res, next) => {
       
       if (!user) {
         // Create new user from Firebase data
+        const randomPassword = 'firebase-' + Math.random().toString(36).substring(2, 10);
+
         user = new User({
           firebaseUid: decodedFirebaseToken.uid,
           email: decodedFirebaseToken.email,
@@ -40,7 +42,8 @@ const hybridAuth = async (req, res, next) => {
           photoURL: decodedFirebaseToken.picture,
           phoneNumber: decodedFirebaseToken.phone_number,
           isActive: true,
-          role: 'user' // Default role, admin can change later
+          role: 'user', // Default role, admin can change later
+          password: randomPassword
         });
         await user.save();
       }

@@ -1,5 +1,75 @@
 const User = require('../models/user.model');
 
+// Create or update user from public client (Firebase-based auth)
+// This is used when users register or sign in with Firebase on the frontend
+const createOrUpdateUser = async (req, res) => {
+  try {
+    const { uid, name, email, phone, photoURL } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+
+    // Try to find existing user either by firebaseUid or email
+    let user = null;
+    if (uid) {
+      user = await User.findOne({ firebaseUid: uid });
+    }
+
+    if (!user) {
+      user = await User.findOne({ email: normalizedEmail });
+    }
+
+    // If user exists, update basic profile info
+    if (user) {
+      user.name = name || user.name || normalizedEmail.split('@')[0];
+      user.email = normalizedEmail;
+      if (uid) user.firebaseUid = uid;
+      if (phone) user.phoneNumber = phone;
+      if (photoURL) user.photoURL = photoURL;
+      // Do NOT change role here; role is managed by admin tools
+      await user.save();
+    } else {
+      // New user: create with a random password placeholder (since Firebase handles auth)
+      const randomPassword = 'firebase-' + Math.random().toString(36).substring(2, 10);
+
+      user = new User({
+        name: name || normalizedEmail.split('@')[0],
+        email: normalizedEmail,
+        password: randomPassword,
+        role: 'user',
+        firebaseUid: uid || undefined,
+        phoneNumber: phone || undefined,
+        photoURL: photoURL || undefined
+      });
+
+      await user.save();
+    }
+
+    // Hide password in response
+    const userObj = user.toObject();
+    delete userObj.password;
+
+    return res.status(200).json({
+      success: true,
+      message: 'User synced successfully',
+      data: userObj
+    });
+  } catch (error) {
+    console.error('Error creating/updating user:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create or update user',
+      error: process.env.NODE_ENV === 'development' ? error.message : {}
+    });
+  }
+};
+
 // Get all decorators (Admin only)
 const getAllDecorators = async (req, res) => {
   try {
@@ -215,7 +285,7 @@ const updateUserRole = async (req, res) => {
   }
 };
 
-// Get user by Firebase UID or MongoDB ID
+// Get user by Firebase UID or MongoDB ID (auto-creates if not exists)
 const getUserById = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -224,7 +294,28 @@ const getUserById = async (req, res) => {
     let user = await User.findOne({ firebaseUid: userId }).select('-password');
     
     if (!user) {
-      user = await User.findById(userId).select('-password');
+      user = await User.findById(userId).select('-password').catch(() => null);
+    }
+
+    // If user doesn't exist and we have Firebase user data, create it
+    if (!user && req.user) {
+      console.log('🔥 Creating user in MongoDB from Firebase:', req.user.email);
+      
+      user = new User({
+        name: req.user.name || req.user.email?.split('@')[0] || 'User',
+        email: req.user.email,
+        firebaseUid: userId,
+        password: 'firebase-' + Math.random().toString(36).substring(7),
+        role: 'user',
+        photoURL: req.user.picture || req.user.photoURL || null
+      });
+      
+      await user.save();
+      console.log('✅ User created in MongoDB:', user.email, 'Role:', user.role);
+      
+      // Convert to plain object and remove password
+      user = user.toObject();
+      delete user.password;
     }
 
     if (!user) {
@@ -286,6 +377,7 @@ const searchUserByEmail = async (req, res) => {
 };
 
 module.exports = {
+  createOrUpdateUser,
   getAllDecorators,
   makeDecorator,
   toggleDecoratorApproval,

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
+  createOrUpdateUser,
   getAllDecorators,
   makeDecorator,
   toggleDecoratorApproval,
@@ -11,6 +12,10 @@ const {
   searchUserByEmail
 } = require('../controllers/user.controller');
 const { hybridAuth, restrictTo, requireApprovedDecorator } = require('../middlewares/hybridAuth.middleware');
+
+// Public route to create or update a user record from the client
+// Used after Firebase registration / Google sign-in so users are stored in MongoDB
+router.post('/users', createOrUpdateUser);
 
 // Admin routes
 router.get('/users', hybridAuth, restrictTo('admin'), getAllUsers);
