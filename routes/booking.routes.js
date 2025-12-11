@@ -9,7 +9,8 @@ const {
   cancelBooking,
   getBookingsByDecorator,
   assignDecorator,
-  updateBookingStatusSteps
+  updateBookingStatusSteps,
+  rateBookingDecorator
 } = require('../controllers/booking.controller');
 const { hybridAuth, restrictTo, requireApprovedDecorator } = require('../middlewares/hybridAuth.middleware');
 
@@ -23,7 +24,9 @@ router.delete('/:id', cancelBooking); // Cancel booking
 
 // Admin / Decorator specific routes
 router.patch('/:id/assign', hybridAuth, restrictTo('admin'), assignDecorator); // Assign decorator to booking (admin)
-router.patch('/:id/status', hybridAuth, requireApprovedDecorator, updateBookingStatusSteps); // Update booking status steps (decorator)
+// Allow any authenticated decorator to update status steps; admin controls who gets assignments
+router.patch('/:id/status', hybridAuth, restrictTo('decorator'), updateBookingStatusSteps); // Update booking status steps (decorator)
+router.patch('/:id/rating', hybridAuth, rateBookingDecorator); // User rates decorator/service for this booking
 
 // Admin only routes
 router.get('/', hybridAuth, restrictTo('admin'), getAllBookings); // Get all bookings

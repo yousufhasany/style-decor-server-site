@@ -87,6 +87,20 @@ const bookingSchema = new mongoose.Schema(
       required: false,
       min: [0, 'Decorator earning cannot be negative']
     },
+    // User feedback about the decorator/service
+    userRating: {
+      type: Number,
+      min: 1,
+      max: 5
+    },
+    userReview: {
+      type: String,
+      trim: true,
+      maxlength: [1000, 'Review cannot exceed 1000 characters']
+    },
+    ratedAt: {
+      type: Date
+    },
     statusSteps: [
       {
         step: {

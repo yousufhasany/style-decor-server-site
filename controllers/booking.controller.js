@@ -297,6 +297,95 @@ const updateBooking = async (req, res) => {
   }
 };
 
+// Allow a user to rate the decorator/service for a completed booking
+const rateBookingDecorator = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rating, review } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
+
+    const numericRating = Number(rating);
+    if (!numericRating || numericRating < 1 || numericRating > 5) {
+      return res.status(400).json({
+        success: false,
+        message: 'Rating must be a number between 1 and 5'
+      });
+    }
+
+    const booking = await Booking.findById(id);
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+
+    // Only the original user can rate their booking
+    const requesterEmail = req.user?.email || req.user?.user?.email;
+    if (!requesterEmail || booking.userInfo.email !== requesterEmail.toLowerCase()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not allowed to rate this booking'
+      });
+    }
+
+    // Only completed bookings should be rated
+    if (booking.status !== 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: 'You can only rate completed bookings'
+      });
+    }
+
+    booking.userRating = numericRating;
+    booking.userReview = review || '';
+    booking.ratedAt = new Date();
+
+    await booking.save();
+
+    // Optionally update the decorator's aggregate rating
+    if (booking.assignedDecorator) {
+      const decoratorId = booking.assignedDecorator;
+
+      const ratedBookings = await Booking.find({
+        assignedDecorator: decoratorId,
+        userRating: { $gte: 1 },
+        status: 'completed'
+      }).select('userRating');
+
+      if (ratedBookings.length > 0) {
+        const total = ratedBookings.reduce((sum, b) => sum + (b.userRating || 0), 0);
+        const avgRating = total / ratedBookings.length;
+
+        await User.findByIdAndUpdate(decoratorId, {
+          rating: avgRating,
+          totalProjects: ratedBookings.length
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Rating submitted successfully',
+      data: booking
+    });
+  } catch (error) {
+    console.error('Error rating booking/decorator:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to submit rating',
+      error: process.env.NODE_ENV === 'development' ? error.message : {}
+    });
+  }
+};
+
 // Cancel/Delete booking
 const cancelBooking = async (req, res) => {
   try {
@@ -510,7 +599,8 @@ module.exports = {
   cancelBooking,
   getBookingsByDecorator,
   assignDecorator,
-  updateBookingStatusSteps
+  updateBookingStatusSteps,
+  rateBookingDecorator
 };
 
 // Get bookings assigned to a specific decorator
