@@ -4,7 +4,7 @@ const User = require('../models/user.model');
 // This is used when users register or sign in with Firebase on the frontend
 const createOrUpdateUser = async (req, res) => {
   try {
-    const { uid, name, email, phone, photoURL } = req.body;
+    const { uid, name, email, phone, photoURL, requestedRole } = req.body;
 
     if (!email) {
       return res.status(400).json({
@@ -14,6 +14,11 @@ const createOrUpdateUser = async (req, res) => {
     }
 
     const normalizedEmail = email.toLowerCase();
+
+    // Bootstrap admin support: if email matches configured admin email,
+    // always treat this account as an admin in MongoDB
+    const bootstrapAdminEmail = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@styledecor.com').toLowerCase();
+    const isBootstrapAdmin = normalizedEmail === bootstrapAdminEmail;
 
     // Try to find existing user either by firebaseUid or email
     let user = null;
@@ -32,20 +37,38 @@ const createOrUpdateUser = async (req, res) => {
       if (uid) user.firebaseUid = uid;
       if (phone) user.phoneNumber = phone;
       if (photoURL) user.photoURL = photoURL;
-      // Do NOT change role here; role is managed by admin tools
+      // Optionally auto-upgrade to decorator if explicitly requested and currently a basic user
+      if (!isBootstrapAdmin && requestedRole === 'decorator' && user.role === 'user') {
+        user.role = 'decorator';
+        user.isApproved = true;
+      }
+
+      // Ensure bootstrap admin account is always marked as admin
+      if (isBootstrapAdmin) {
+        user.role = 'admin';
+        user.isApproved = true;
+      }
       await user.save();
     } else {
       // New user: create with a random password placeholder (since Firebase handles auth)
       const randomPassword = 'firebase-' + Math.random().toString(36).substring(2, 10);
 
+      // Determine initial role
+      const initialRole = isBootstrapAdmin
+        ? 'admin'
+        : requestedRole === 'decorator'
+        ? 'decorator'
+        : 'user';
+
       user = new User({
         name: name || normalizedEmail.split('@')[0],
         email: normalizedEmail,
         password: randomPassword,
-        role: 'user',
+        role: initialRole,
         firebaseUid: uid || undefined,
         phoneNumber: phone || undefined,
-        photoURL: photoURL || undefined
+        photoURL: photoURL || undefined,
+        isApproved: initialRole !== 'user'
       });
 
       await user.save();
