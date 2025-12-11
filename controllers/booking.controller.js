@@ -1,4 +1,5 @@
 const Booking = require('../models/booking.model');
+const User = require('../models/user.model');
 const mongoose = require('mongoose');
 
 // Create a new booking
@@ -337,11 +338,232 @@ const cancelBooking = async (req, res) => {
   }
 };
 
+// Assign a decorator to a booking (admin only)
+const assignDecorator = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { decoratorId } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(decoratorId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid decorator ID format'
+      });
+    }
+
+    const decorator = await User.findById(decoratorId);
+
+    if (!decorator) {
+      return res.status(404).json({
+        success: false,
+        message: 'Decorator not found'
+      });
+    }
+
+    if (decorator.role !== 'decorator') {
+      return res.status(400).json({
+        success: false,
+        message: 'Selected user is not a decorator'
+      });
+    }
+
+    const booking = await Booking.findById(id).populate('serviceId', 'service_name cost unit category');
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+
+    booking.assignedDecorator = decorator._id;
+
+    // Initialize status steps if not present
+    if (!Array.isArray(booking.statusSteps) || booking.statusSteps.length === 0) {
+      const isConfirmed = ['confirmed', 'in-progress', 'completed'].includes((booking.status || '').toLowerCase());
+      const isInProgress = ['in-progress', 'completed'].includes((booking.status || '').toLowerCase());
+      const isCompleted = (booking.status || '').toLowerCase() === 'completed';
+
+      booking.statusSteps = [
+        { step: 'Confirmed', completed: isConfirmed },
+        { step: 'Planning', completed: isInProgress || isCompleted },
+        { step: 'In Progress', completed: isInProgress || isCompleted },
+        { step: 'Completed', completed: isCompleted }
+      ];
+    }
+
+    // Optionally initialize decorator earning if service cost is available and not set yet
+    if (!booking.decoratorEarning && booking.serviceId && typeof booking.serviceId.cost === 'number') {
+      booking.decoratorEarning = booking.serviceId.cost * 0.7;
+    }
+
+    await booking.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Decorator assigned successfully',
+      data: booking
+    });
+  } catch (error) {
+    console.error('Error assigning decorator to booking:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to assign decorator',
+      error: process.env.NODE_ENV === 'development' ? error.message : {}
+    });
+  }
+};
+
+// Update booking status steps (decorator progress)
+const updateBookingStatusSteps = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { stepIndex, completed } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid booking ID format'
+      });
+    }
+
+    if (typeof stepIndex !== 'number' || stepIndex < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid stepIndex (number) is required'
+      });
+    }
+
+    const booking = await Booking.findById(id);
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+
+    // If called by a decorator, ensure they own this booking
+    if (req.user && req.user.role === 'decorator' && booking.assignedDecorator && booking.assignedDecorator.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not assigned to this booking'
+      });
+    }
+
+    if (!Array.isArray(booking.statusSteps) || stepIndex >= booking.statusSteps.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid step index for this booking'
+      });
+    }
+
+    booking.statusSteps[stepIndex].completed = Boolean(completed);
+
+    // Derive overall status from completed steps
+    const completedCount = booking.statusSteps.filter(s => s.completed).length;
+    let newStatus = booking.status || 'pending';
+
+    if (completedCount === 0) {
+      newStatus = 'pending';
+    } else if (completedCount === 1) {
+      newStatus = 'confirmed';
+    } else if (completedCount > 1 && completedCount < booking.statusSteps.length) {
+      newStatus = 'in-progress';
+    } else if (completedCount === booking.statusSteps.length) {
+      newStatus = 'completed';
+    }
+
+    booking.status = newStatus;
+    booking.bookingStatus = newStatus;
+
+    await booking.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Booking status updated successfully',
+      data: booking
+    });
+  } catch (error) {
+    console.error('Error updating booking status steps:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update booking status',
+      error: process.env.NODE_ENV === 'development' ? error.message : {}
+    });
+  }
+};
+
 module.exports = {
   createBooking,
   getAllBookings,
   getBookingsByUser,
   getBookingById,
   updateBooking,
-  cancelBooking
+  cancelBooking,
+  getBookingsByDecorator,
+  assignDecorator,
+  updateBookingStatusSteps
 };
+
+// Get bookings assigned to a specific decorator
+async function getBookingsByDecorator(req, res) {
+  try {
+    const { decoratorKey } = req.params;
+
+    if (!decoratorKey) {
+      return res.status(400).json({
+        success: false,
+        message: 'Decorator identifier is required'
+      });
+    }
+
+    // decoratorKey is expected to be Firebase UID from the frontend
+    const decorator = await User.findOne({ firebaseUid: decoratorKey });
+
+    if (!decorator) {
+      return res.status(404).json({
+        success: false,
+        message: 'Decorator not found'
+      });
+    }
+
+    const bookings = await Booking.find({ assignedDecorator: decorator._id })
+      .populate('serviceId', 'service_name cost unit category')
+      .sort('-createdAt');
+
+    // Shape data slightly for decorator dashboard convenience
+    const projects = bookings.map(b => ({
+      _id: b._id,
+      serviceId: b.serviceId,
+      clientName: b.userInfo?.name,
+      date: b.serviceDate || b.date,
+      time: b.serviceTime,
+      status: b.status,
+      totalAmount: b.serviceId?.cost,
+      decoratorEarning: b.decoratorEarning || (b.serviceId?.cost ? b.serviceId.cost * 0.7 : 0),
+      address: b.location?.address,
+      statusSteps: b.statusSteps || []
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: projects.length,
+      bookings: projects
+    });
+  } catch (error) {
+    console.error('Error fetching decorator bookings:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch decorator bookings',
+      error: process.env.NODE_ENV === 'development' ? error.message : {}
+    });
+  }
+}

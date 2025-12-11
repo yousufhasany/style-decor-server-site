@@ -77,6 +77,30 @@ const bookingSchema = new mongoose.Schema(
       default: 'pending',
       lowercase: true
     },
+    assignedDecorator: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: false
+    },
+    decoratorEarning: {
+      type: Number,
+      required: false,
+      min: [0, 'Decorator earning cannot be negative']
+    },
+    statusSteps: [
+      {
+        step: {
+          type: String,
+          required: true,
+          trim: true,
+          maxlength: [100, 'Status step cannot exceed 100 characters']
+        },
+        completed: {
+          type: Boolean,
+          default: false
+        }
+      }
+    ],
     status: {
       type: String,
       enum: ['pending', 'confirmed', 'in-progress', 'completed', 'cancelled'],
@@ -126,6 +150,7 @@ bookingSchema.pre('save', function(next) {
 // Index for faster queries
 bookingSchema.index({ serviceId: 1, date: 1 });
 bookingSchema.index({ 'userInfo.email': 1 });
+bookingSchema.index({ assignedDecorator: 1 });
 
 const Booking = mongoose.model('Booking', bookingSchema);
 
