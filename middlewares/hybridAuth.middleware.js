@@ -42,9 +42,17 @@ const hybridAuth = async (req, res, next) => {
           photoURL: decodedFirebaseToken.picture,
           phoneNumber: decodedFirebaseToken.phone_number,
           isActive: true,
-          role: 'user', // Default role, admin can change later
+          role: 'user', // Default role, may be upgraded to admin below
           password: randomPassword
         });
+        await user.save();
+      }
+
+      // Bootstrap admin: if email matches configured admin email, ensure role is admin
+      const bootstrapAdminEmail = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@styledecor.com').toLowerCase();
+      if (user.email && user.email.toLowerCase() === bootstrapAdminEmail && user.role !== 'admin') {
+        user.role = 'admin';
+        user.isApproved = true;
         await user.save();
       }
 
@@ -68,6 +76,14 @@ const hybridAuth = async (req, res, next) => {
             success: false,
             message: 'User not found. Token is invalid.'
           });
+        }
+
+        // Bootstrap admin for JWT path as well
+        const bootstrapAdminEmail = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@styledecor.com').toLowerCase();
+        if (user.email && user.email.toLowerCase() === bootstrapAdminEmail && user.role !== 'admin') {
+          user.role = 'admin';
+          user.isApproved = true;
+          await user.save();
         }
 
         // Check if user is active
